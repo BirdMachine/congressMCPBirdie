@@ -7,6 +7,7 @@ introduced legislation. No full text is downloaded by this tool.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import time
@@ -363,6 +364,12 @@ async def _digest_impl(
                     if "res" in event["legislation_type"]:
                         groups["resolutions"].append(index)
                 result["categories"] = groups  # indices prevent repeated metadata
+        if operation != "bill_texts_received" and os.getenv("BIRDIE_DIGEST_EPHEMERAL", "").lower() == "true":
+            result["observation_state"] = {
+                "ephemeral": True,
+                "note": "Observation baselines reset when the host sleeps/restarts/redeploys. "
+                        "Late-action novelty cannot be compared across those resets.",
+            }
         result["range"] = {"start": iso(start), "end": iso(end)}
         result["operation"] = operation
         output = json.dumps(result, separators=(",", ":"))

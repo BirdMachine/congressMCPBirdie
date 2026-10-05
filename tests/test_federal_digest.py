@@ -296,3 +296,11 @@ async def test_missing_key_is_explicit(official, monkeypatch):
 
 def test_official_identifier_ordinal():
     assert "/101st-congress/senate-joint-resolution/2" in d.identity(101, "SJRES", 2)["official_url"]
+
+
+@pytest.mark.asyncio
+async def test_free_host_reports_ephemeral_observation_limit(official, monkeypatch):
+    monkeypatch.setenv("BIRDIE_DIGEST_EPHEMERAL", "true")
+    result = await run("daily_legislative_activity")
+    assert result["observation_state"]["ephemeral"] is True
+    assert "reset" in result["observation_state"]["note"]

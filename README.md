@@ -634,6 +634,14 @@ To activate: authorize your GitHub repository in Render, create a Blueprint usin
 
 No host account or live key is bundled with this PR. The final hosted URL and real-data/ChatGPT smoke test remain deployment steps; local fixture success is not proof that official APIs have indexed today's documents. Render's [Docker documentation](https://render.com/docs/docker) and [Blueprint reference](https://render.com/docs/blueprint-spec) describe the managed deployment.
 
+### Optional $0 Render service
+
+Before creating the service, use **Blueprint Path `render-free.yaml`** on the same `birdie/federal-digest` branch to choose the free alternative instead of the paid `render.yaml`. It uses the same Docker entry point, credentials, HTTPS and MCP operations, with **no attached disk**. Choose one Blueprint, not both. Verify that the creation estimate shows no paid service or disk before deploying. Existing paid services with disks require separate migration/removal; changing a path does not automatically cancel an already deployed paid resource.
+
+Render Free sleeps after 15 minutes without inbound traffic and takes about a minute to wake on the next request. The first ChatGPT connection/tool call can time out while it wakes; open the public `/healthz` URL, wait for an OK response, then retry MCP. This is wake-up latency, not an overnight background processor. A digest call runs when the MCP tool is invoked; free hosting does not schedule an overnight digest. Workspace free-hour/build/bandwidth limits also apply.
+
+**Persistence tradeoff:** Render discards the free service's local files when it sleeps, restarts or redeploys. Publication/date-range queries still retrieve official data, but the SQLite observation baseline is lost. Each fresh start therefore treats older action evidence as unbaselined/uncertain; reliable late-action novelty comparison across daily runs needs persistent storage. Free combined responses explicitly include `observation_state.ephemeral=true` and this limitation. Keep overlapping official-data queries and consumer deduplication, and do not interpret an empty novel-event set as proof that delayed indexing did not occur. To retain that guarantee at $0 hosting cost, a separate durable external store would need to be configured; this optional Blueprint does not pretend to provide one. See [Render Free limitations](https://render.com/docs/free).
+
 ### Verification
 
 ```bash
