@@ -13,8 +13,12 @@ from starlette.responses import JSONResponse
 
 class ProtectedMCP:
     def __init__(self, app, token: str):
-        if len(token) < 32 or not token.isascii() or not all(c.isalnum() or c in "-_" for c in token):
-            raise ValueError("MCP_ACCESS_TOKEN must be at least 32 URL-safe ASCII characters")
+        if len(token) < 32 or not token.isascii() or not all(c.isalnum() or c in "-_+/=" for c in token):
+            raise ValueError(
+                "MCP_ACCESS_TOKEN must be at least 32 ASCII characters using the base64 or base64url alphabet"
+            )
+        # Render generateValue uses standard base64, including +, / and =.
+        # These are valid path characters; authenticate the entire exact path.
         self.app, self.token = app, token
 
     async def __call__(self, scope, receive, send):

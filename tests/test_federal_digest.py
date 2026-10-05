@@ -227,8 +227,8 @@ async def test_transport_error_sanitized(official, monkeypatch):
     assert "sensitive detail" not in json.dumps(await run())
 
 
-def test_remote_auth_and_health():
-    token = secrets.token_urlsafe(32)
+@pytest.mark.parametrize("token", [secrets.token_urlsafe(32), "+/" * 21 + "=="])
+def test_remote_auth_and_health(token):
 
     async def app(scope, receive, send):
         await JSONResponse({"path": scope["path"]})(scope, receive, send)
@@ -245,9 +245,10 @@ def test_remote_auth_and_health():
         client.close()
 
 
-def test_remote_fail_closed():
+@pytest.mark.parametrize("token", ["", "x" * 31, "x" * 32 + "\n", "x" * 32 + "?", "x" * 32 + "#", "x" * 32 + "é"])
+def test_remote_fail_closed(token):
     with pytest.raises(ValueError):
-        ProtectedMCP(None, "")
+        ProtectedMCP(None, token)
 
 
 def test_real_remote_mcp_handshake(monkeypatch):
