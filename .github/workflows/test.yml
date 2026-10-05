@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio
+          pip install pytest pytest-asyncio ruff
           # Install the project itself so `import congress_api` resolves. requirements.txt
           # does not include the package, and the bare `pytest` console script does not
           # put the repo root on sys.path (only `python -m pytest` does) -- without this,
@@ -44,3 +44,6 @@ jobs:
         env:
           CONGRESS_API_KEY: ci-placeholder-key
         run: python scripts/audit_tool_schemas.py --check
+
+      - name: Lint Birdie digest extension
+        run: ruff check congress_api/features/federal_digest.py congress_api/features/digest_state.py congress_api/remote.py tests/test_federal_digest.py

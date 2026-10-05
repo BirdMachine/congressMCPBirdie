@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: congress-mcp-birdie
+    runtime: docker
+    branch: birdie/federal-digest
+    plan: "0.5c-512mb"
+    healthCheckPath: /healthz
+    autoDeploy: false
+    disk:
+      name: digest-state
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: CONGRESS_API_KEY
+        sync: false
+      - key: MCP_ACCESS_TOKEN
+        generateValue: true
+      - key: BIRDIE_DIGEST_STATE
+        value: /var/data/birdie/digest.sqlite3
+      - key: LOG_LEVEL
+        value: WARNING

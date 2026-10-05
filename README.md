@@ -422,7 +422,7 @@ CONGRESS_API_KEY=your-key congressmcp --transport streamable-http --host 0.0.0.0
 # MCP endpoint: http://<host>:8000/mcp
 ```
 
-**CongressMCP has no built-in authentication.** The server is designed to run on your own machine. If you expose it beyond localhost, put it behind something that does authenticate — a reverse proxy with an access policy, an HTTPS tunnel with an allow-list, or a VPN — and remember that anyone who can reach it is spending your Congress.gov quota. ChatGPT and Claude.ai additionally require HTTPS on a publicly resolvable hostname.
+**The upstream CLI transport has no built-in authentication.** This fork also provides the protected `congress_api.remote` entry point described in the Birdie section below. The server is designed to run on your own machine. If you expose it beyond localhost, put it behind something that does authenticate — a reverse proxy with an access policy, an HTTPS tunnel with an allow-list, or a VPN — and remember that anyone who can reach it is spending your Congress.gov quota. ChatGPT and Claude.ai additionally require HTTPS on a publicly resolvable hostname.
 
 ## Tools
 
@@ -544,3 +544,111 @@ Sustainable Use License
 ---
 
 **Built for government transparency and accessible civic data.**
+
+## Birdie federal Legislature Digest
+
+This fork adds `federal_digest`, a small composition layer over the existing Congress.gov bills helper, validated GovInfo query/package mapping and pagination, keyed retrying transport, structured error envelopes, deduplication helper, and redacted bill-text tracing. Upstream tools, attribution, and license remain intact. This feature handles **federal** legislation only; Pennsylvania activity remains a separate source for ChatGPT's combined digest.
+
+### Operations and examples
+
+Call the MCP tool `federal_digest` with one of these argument objects. Substitute today's date in America/New_York when requesting a named legislative day; the official publication and action dates are day labels, while API discovery timestamps are UTC. These examples deliberately use an explicit date rather than an ambiguous server-local “today”.
+
+Today's newly published version packages (a “Bill Texts Received” equivalent):
+
+```json
+{"operation":"bill_texts_received","fromDateTime":"2026-10-05","limit":20}
+```
+
+Changes since the last **completed** digest run, including newly indexed evidence:
+
+```json
+{"operation":"legislative_changes_since","fromDateTime":"2026-10-02T13:00:00Z","toDateTime":"2026-10-05T13:00:00Z","limit":20}
+```
+
+A compact daily or multi-day aggregation:
+
+```json
+{"operation":"daily_legislative_activity","fromDateTime":"2026-10-02","toDateTime":"2026-10-05","congress":119,"limit":20}
+```
+
+The aggregation returns one `results` array and category arrays of indices into it: new legislation, new bill texts, passed a chamber, advancing, failed passage, presidential action, resolutions, and procedural. Resolutions is a secondary index and may overlap other categories. Ceremonial intent, “stalled” status, and political interpretation are not inferred. Unrecognized procedural actions are omitted instead of being called meaningful movement. No full bill texts are returned. `chamber` is the legislation's originating chamber; action source/chamber evidence is separately preserved where supplied.
+
+### “Received” dates and official-data limits
+
+**This is an official publication-date equivalent, not an exact Congress.gov website receipt-date export.** `bill_texts_received` searches GovInfo's BILLS **version packages** using `publishdate:range`, not a list of bills that happened to have an action. Multiple versions of one bill remain separate results. Resolutions and both chambers use the same normalized identifiers. Congress.gov detail records supply title, sponsor, latest action/status evidence, committees metadata when present, and the bill update timestamp. Missing optional values are null; unknown version codes retain their code with a null description. Official PDF/XML/details and Congress.gov links accompany each version.
+
+| Field | Meaning |
+| --- | --- |
+| `legislative_action_date` / action `event_date` | The legislative action's official day |
+| `text_publication_date` / text `event_date` | GovInfo's version `dateIssued` / publication date, day precision |
+| `text_receipt_date` | Null: no verified exact Congress.gov receipt field is exposed by these endpoints |
+| `source_ingested_at` | GovInfo `dateIngested`, when available; distinct from publication |
+| `source_updated_at` | GovInfo `lastModified` for text, Congress.gov update timestamp for actions |
+| `congress_updated_at` | Congress.gov bill detail update timestamp, separate from GovInfo indexing |
+| `observed_at` / `late_indexed` | Durable local first observation of an action / an older action discovered after its baseline |
+
+Congress.gov update-date windows discover candidate bills (historical daily queries scan updates through the present so later bill updates do not hide earlier requested action dates), then complete paginated action histories supply evidence for conservative classification (introduction, referral/reporting, passage, explicit failed passage, adopted amendments, conference, enrollment, presidential action, enactment, veto and override). A rejected amendment or procedural motion is not called failed bill passage. Upstream publication/indexing delays and later corrections remain possible. GovInfo `lastModified` discovery on `legislative_changes_since` retains older newly ingested text as `late_index_candidates`; a lastModified-only update to an old package is suppressed as metadata churn. Missing ingestion evidence is not invented. Date-only action records cannot establish an exact intraday ordering: timestamp watermarks include all action dates on their starting day, so dedup across runs is necessary. Publication operations use whole date bounds even when given timestamps.
+
+A tiny standard-library SQLite observation ledger detects substantive old actions first seen after a bill's initial baseline. Initial older latest actions remain uncertain `unbaselined_late_action` candidates; the server does not claim all historical events happened since your watermark. Newly observed historical actions carry `late_indexed: true` and preserve their real `event_date`. Observations are replayable after a partial run or upstream failure; stored observation timestamps are stable. Keep this ledger on a persistent disk. Clearing it loses delayed-action novelty detection until new baselines have been established. It stores evidence hashes and observation times, **not API keys**. This is an observation baseline, not a guaranteed upstream transaction log or a correction/deletion feed.
+
+### Pagination and digest watermarks
+
+`limit` (1–50) caps **candidate bills and text version packages per source**, not the number of action events. A bill can produce many substantive actions. Each request fetches one candidate-bill page and one version-package page; bill action histories are fully paged with a 10,000-action safety limit that returns an error instead of silently truncating. Errors and malformed responses never masquerade as an empty weekend. Stable ordering is by event date, normalized identifier, type and evidence; source pages retain the upstream ordering. Version duplication is suppressed within each page; consumers should dedup by `package_id` across pages/runs and by legislation/type/date/action text for actions.
+
+Pass `next_offset` as `offset` for Congress.gov and `next_page_token` verbatim as `page_token` for GovInfo. These sources exhaust independently: after a source returns null, set its `include_actions` or `include_texts` to false on subsequent combined requests. For `bill_texts_received`, only `next_page_token` matters. Keep the original date bounds, scopes, and limit unchanged while paging. Finish **both** streams before advancing your saved digest watermark, and overlap at least the previous day to handle date precision. The ledger does not schedule runs or save a successful-run watermark for ChatGPT. Filter/rank/summarize these evidence records in the digest conversation; do not treat a short or empty page with a continuation as exhausted.
+
+### Local and remote operation
+
+Use the existing installation/development workflow:
+
+```bash
+uv sync
+# Supply CONGRESS_API_KEY through your shell, secret manager, or ignored .env.
+uv run python -m congress_api
+# Upstream unauthenticated HTTP transport: use only privately/behind authentication.
+uv run python -m congress_api --transport streamable-http --port 8000
+```
+
+`.env.example` contains placeholders only. Never put a real key in Git, commands copied into documentation, fixtures, chat prompts, or traces. The canonical `CONGRESS_API_KEY` is shared with GovInfo; the existing optional `GOVINFO_API_KEY` override remains supported. The Congress.gov key never goes to MCP clients.
+
+For protected hosted HTTP, set `CONGRESS_API_KEY` and `MCP_ACCESS_TOKEN` in the host's runtime secrets, and optionally `BIRDIE_DIGEST_STATE` to a writable persistent SQLite path. Generate the **separate MCP token**, locally/private to you, with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`. It must be at least 32 URL-safe ASCII characters. The production entry point fails closed without either credential:
+
+```bash
+uv run python -m congress_api.remote
+# Container alternative: secrets are supplied at runtime, never baked into the image.
+docker build -t congress-mcp-birdie .
+docker run --rm -p 8000:8000 --env CONGRESS_API_KEY --env MCP_ACCESS_TOKEN congress-mcp-birdie
+```
+
+The canonical endpoint is `https://<host>/mcp`, accepting `Authorization: Bearer <MCP_ACCESS_TOKEN>` from header-capable clients. Health checks use public `GET /healthz`. MCP Host/Origin validation stays enabled; Render’s `RENDER_EXTERNAL_HOSTNAME` is detected automatically. Set `MCP_PUBLIC_HOST` to a bare hostname for other hosts or a custom domain. The entry point uses upstream stateless Streamable HTTP and disables application access logs. It does not replace the existing stdio or upstream CLI entry point.
+
+**ChatGPT connection:** ChatGPT's connector cannot supply an arbitrary custom API key/header. For this personal deployment, the lightest supported implementation is a high-entropy capability URL: `https://<host>/connect/<MCP_ACCESS_TOKEN>/mcp`, entered as a no-OAuth/no-auth remote MCP connection. The middleware validates the capability in constant time and rewrites only an exact matching path to upstream `/mcp`. Treat the entire URL as a password: do not publish it, place it in shared documents, or include it in screenshots; rotate the token if disclosed. Check hosting/proxy request-log retention as those systems can record URLs independently of the disabled application access log. This is personal capability-based access, not user identity authentication or an OAuth implementation. If you require the exact `/mcp` URL in ChatGPT with identity-based authorization, put an MCP-compatible OAuth proxy in front (authorization code + PKCE/discovery); arbitrary bearer-token entry is not a ChatGPT UI feature.
+
+In the current ChatGPT web UI, enable developer mode, then add a remote MCP through Plugins (or Apps/Connectors in UI versions using those labels), paste the private capability URL, choose no OAuth, and test `federal_digest`. Account/workspace policy may limit developer-mode access. See the [official OpenAI MCP quickstart](https://developers.openai.com/plugins/quickstart) and [authentication guidance](https://developers.openai.com/plugins/build/auth). The local MCP initialization and tool discovery are fixture-tested; a live ChatGPT connection still needs post-deployment verification.
+
+### Hosted deployment: Render
+
+`render.yaml` defaults to a free managed Docker web service with HTTPS, health checks, runtime secrets, and the protected entry point, without a persistent disk. For always-on hosting and durable delayed-action observations, explicitly choose `render-paid.yaml` and review its compute/disk pricing before deployment. The Docker image runs as a non-root user and does not copy `.env`, Git, caches or fixture data. The blueprint intentionally points at `birdie/federal-digest` so you can preview the PR without merging. Change `branch` to `master` after review/merge. Automatic deployments are disabled so branch pushes do not unexpectedly publish new code.
+
+To activate: authorize your GitHub repository in Render, create a Blueprint using this repository and **feature branch**, supply `CONGRESS_API_KEY` privately when prompted, keep the default Blueprint Path `render.yaml`, verify the estimate shows a free service and no disk, and deploy. `MCP_ACCESS_TOKEN` is generated by Render as a base64 secret; its `+`, `/` and `=` characters are accepted without changing the value. Copy its value privately from the service environment only to construct your personal ChatGPT connection URL. `BIRDIE_DIGEST_STATE=/var/data/birdie/digest.sqlite3` stores observations; only the paid Blueprint attaches a disk to preserve them across deploys. Verify `GET /healthz`, an unauthenticated `/mcp` rejection, and MCP initialization/tool listing through the protected URL, then run a small single-day query with your real data.gov key. The app never logs that token, but the host's ingress/request logging must also be kept private. The container entry point initializes the disk’s dedicated `birdie` directory and drops to UID 10001 before starting MCP; an unwritable ledger returns `digest_state_unavailable`.
+
+No host account or live key is bundled with this PR. The final hosted URL and real-data/ChatGPT smoke test remain deployment steps; local fixture success is not proof that official APIs have indexed today's documents. Render's [Docker documentation](https://render.com/docs/docker) and [Blueprint reference](https://render.com/docs/blueprint-spec) describe the managed deployment.
+
+### Default free Render service
+
+Before creating the service, use the default **Blueprint Path `render.yaml`** on the `birdie/federal-digest` branch. `render-free.yaml` remains an equivalent free alias; `render-paid.yaml` is the explicit paid alternative. It uses the same Docker entry point, credentials, HTTPS and MCP operations, with **no attached disk**. Choose one Blueprint, not both. Verify that the creation estimate shows no paid service or disk before deploying. Existing paid services with disks require separate migration/removal; changing a path does not automatically cancel an already deployed paid resource.
+
+Render Free sleeps after 15 minutes without inbound traffic and takes about a minute to wake on the next request. The first ChatGPT connection/tool call can time out while it wakes; open the public `/healthz` URL, wait for an OK response, then retry MCP. This is wake-up latency, not an overnight background processor. A digest call runs when the MCP tool is invoked; free hosting does not schedule an overnight digest. Workspace free-hour/build/bandwidth limits also apply.
+
+**Persistence tradeoff:** Render discards the free service's local files when it sleeps, restarts or redeploys. Publication/date-range queries still retrieve official data, but the SQLite observation baseline is lost. Each fresh start therefore treats older action evidence as unbaselined/uncertain; reliable late-action novelty comparison across daily runs needs persistent storage. Free combined responses explicitly include `observation_state.ephemeral=true` and this limitation. Keep overlapping official-data queries and consumer deduplication, and do not interpret an empty novel-event set as proof that delayed indexing did not occur. To retain that guarantee at $0 hosting cost, a separate durable external store would need to be configured; the free Blueprint does not provide one. See [Render Free limitations](https://render.com/docs/free).
+
+### Verification
+
+```bash
+uv run --with pytest --with pytest-asyncio python -m pytest tests/test_federal_digest.py -q
+uv run --with ruff ruff check congress_api/features/federal_digest.py congress_api/features/digest_state.py congress_api/remote.py tests/test_federal_digest.py
+CONGRESS_API_KEY=ci-placeholder-key uv run --with pytest --with pytest-asyncio python tests/check_known_failures.py
+CONGRESS_API_KEY=ci-placeholder-key uv run python scripts/audit_tool_schemas.py --check
+```
+
+CI uses fixture data and a placeholder key. Existing upstream known failures and lint debt remain governed by `CONTRIBUTING.md` and `tests/KNOWN_FAILURES.md`; this extension does not silently rewrite that baseline. No type-checker gate is configured upstream.
