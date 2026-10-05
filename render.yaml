@@ -2,11 +2,10 @@ services:
   - type: web
     name: congress-mcp-birdie
     runtime: docker
-    repo: https://github.com/BirdMachine/congressMCPBirdie
     branch: birdie/federal-digest
-    plan: starter
+    plan: "0.5c-512mb"
     healthCheckPath: /healthz
-    autoDeployTrigger: "off"
+    autoDeploy: false
     disk:
       name: digest-state
       mountPath: /var/data
