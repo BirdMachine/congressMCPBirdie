@@ -37,6 +37,7 @@ def initialize_mcp_features():
         return
 
     from .features.bill_text import tools as bill_text_tools  # noqa: F401
+    from .features import bill_text_observations_tool  # noqa: F401
     from .features import (  # noqa: F401
         bills_tool,
         amendments_tool,
